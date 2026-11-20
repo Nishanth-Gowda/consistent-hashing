@@ -1,0 +1,562 @@
+<title>Consistent Hashing Lab</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=Space+Grotesk:wght@500;600;700&display=swap">
+<style>
+/* Layout: a lab bench. Ring diagram on the left, instruments (controls, load, inspector) on the right, comparison below. */
+:root {
+  --bg: #f3f6f7;
+  --surface: #ffffff;
+  --fg: #14212b;
+  --muted: #5a6b77;
+  --line: #d8e1e6;
+  --accent: #0a6c87;
+  --accent-soft: #e1f0f5;
+  --good: #1f7a4d;
+  --bad: #b4400f;
+  --font-display: "Space Grotesk", "Segoe UI", system-ui, sans-serif;
+  --font-body: "Inter", system-ui, -apple-system, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0d151b; --surface: #141f27; --fg: #e3ebf0; --muted: #8fa2b0; --line: #26353f;
+    --accent: #52c4e0; --accent-soft: #13313c; --good: #5cd394; --bad: #ff9058;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0d151b; --surface: #141f27; --fg: #e3ebf0; --muted: #8fa2b0; --line: #26353f;
+  --accent: #52c4e0; --accent-soft: #13313c; --good: #5cd394; --bad: #ff9058;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--fg);
+  font-family: var(--font-body); font-size: 15px; line-height: 1.55;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 28px 56px;
+}
+.wrap { max-width: 1180px; margin: 0 auto; display: flex; flex-direction: column; gap: 22px; }
+h1, h2, h3 { font-family: var(--font-display); text-wrap: balance; margin: 0; letter-spacing: -0.01em; }
+h1 { font-size: clamp(28px, 4vw, 40px); font-weight: 700; }
+h2 { font-size: 19px; font-weight: 600; }
+h3 { font-size: 15px; font-weight: 600; }
+p { margin: 0; }
+.lede { color: var(--muted); max-width: 68ch; margin-top: 6px; }
+.mono, code { font-family: var(--font-mono); font-size: 0.92em; }
+.label { font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); font-weight: 600; }
+
+.tabs { display: flex; flex-wrap: wrap; gap: 4px; padding: 4px; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; width: fit-content; max-width: 100%; }
+.tabs button {
+  font: 500 14px var(--font-body); color: var(--muted); background: transparent; border: 0;
+  padding: 8px 14px; border-radius: 7px; cursor: pointer;
+}
+.tabs button[aria-selected="true"] { background: var(--accent); color: var(--surface); }
+.tabs button:hover:not([aria-selected="true"]) { color: var(--fg); background: var(--accent-soft); }
+button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.explain { background: var(--accent-soft); border-radius: 10px; padding: 14px 16px; max-width: 100%; }
+.explain p { max-width: 80ch; }
+
+.bench { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); gap: 22px; align-items: start; }
+@media (max-width: 900px) { .bench { grid-template-columns: minmax(0, 1fr); } }
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 18px; display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.stack { display: flex; flex-direction: column; gap: 22px; min-width: 0; }
+
+.ring-box { position: relative; width: 100%; max-width: 600px; aspect-ratio: 1; margin: 0 auto; }
+#ring { width: 100%; height: 100%; display: block; cursor: crosshair; touch-action: manipulation; }
+.ring-hint { font-size: 13px; color: var(--muted); text-align: center; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 12px; font-size: 12.5px; color: var(--muted); justify-content: center; }
+.legend span { display: inline-flex; align-items: center; gap: 5px; font-family: var(--font-mono); }
+.swatch { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
+
+.ctrl { display: grid; grid-template-columns: 120px minmax(0, 1fr) auto; align-items: center; gap: 10px; }
+@media (max-width: 460px) { .ctrl { grid-template-columns: minmax(0, 1fr) auto; } .ctrl input[type=range] { grid-column: 1 / -1; grid-row: 2; } }
+.ctrl output { font-family: var(--font-mono); font-variant-numeric: tabular-nums; min-width: 4ch; text-align: right; }
+input[type=range] { width: 100%; accent-color: var(--accent); }
+.stepper { display: inline-flex; gap: 6px; align-items: center; }
+.btn {
+  font: 500 13.5px var(--font-body); color: var(--fg); background: var(--surface);
+  border: 1px solid var(--line); border-radius: 8px; padding: 6px 12px; cursor: pointer;
+}
+.btn:hover { border-color: var(--accent); color: var(--accent); }
+.btn.primary { background: var(--accent); color: var(--surface); border-color: var(--accent); }
+.btn.primary:hover { filter: brightness(1.08); color: var(--surface); }
+.btn.sq { width: 32px; height: 32px; padding: 0; font-size: 18px; line-height: 1; }
+.check { display: inline-flex; gap: 8px; align-items: center; font-size: 14px; cursor: pointer; }
+.check input { accent-color: var(--accent); width: 16px; height: 16px; }
+
+.change { border-radius: 10px; padding: 12px 14px; border: 1px solid var(--line); font-size: 14px; }
+.change strong { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.change.good { border-color: color-mix(in srgb, var(--good) 45%, var(--line)); }
+.change.bad { border-color: color-mix(in srgb, var(--bad) 45%, var(--line)); }
+.pill { display: inline-block; font-size: 11.5px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; padding: 2px 8px; border-radius: 99px; margin-left: 6px; vertical-align: 1px; }
+.pill.good { color: var(--good); background: color-mix(in srgb, var(--good) 14%, transparent); }
+.pill.bad { color: var(--bad); background: color-mix(in srgb, var(--bad) 14%, transparent); }
+
+.bars { display: flex; flex-direction: column; gap: 5px; }
+.bar-row { display: grid; grid-template-columns: 96px minmax(0, 1fr) 44px; gap: 8px; align-items: center; font-size: 12.5px; }
+.bar-row .name { font-family: var(--font-mono); color: var(--muted); }
+.bar-row .n { font-family: var(--font-mono); font-variant-numeric: tabular-nums; text-align: right; }
+.track { position: relative; height: 12px; background: var(--bg); border-radius: 3px; }
+.fill { position: absolute; inset: 0 auto 0 0; border-radius: 3px; }
+.avg { position: absolute; top: -3px; bottom: -3px; width: 2px; background: var(--fg); opacity: 0.55; }
+.stat-line { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 13.5px; color: var(--muted); }
+.stat-line b { color: var(--fg); font-family: var(--font-mono); font-weight: 500; font-variant-numeric: tabular-nums; }
+
+.inspect-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.inspect-row input[type=text] {
+  flex: 1 1 160px; min-width: 0; font: 14px var(--font-mono); color: var(--fg); background: var(--bg);
+  border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px;
+}
+.steps { display: flex; flex-direction: column; gap: 8px; font-size: 14px; }
+.steps .result { font-weight: 600; }
+.steps .result code { color: var(--accent); }
+.scroll { overflow-x: auto; max-width: 100%; }
+.probes { max-height: 280px; overflow: auto; border: 1px solid var(--line); border-radius: 8px; }
+table { border-collapse: collapse; width: 100%; font-size: 13px; }
+th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+th { font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); font-weight: 600; position: sticky; top: 0; background: var(--surface); }
+td.num { font-family: var(--font-mono); font-variant-numeric: tabular-nums; text-align: right; }
+th.num { text-align: right; }
+tr.win td { background: var(--accent-soft); font-weight: 600; }
+tr.current td { background: var(--accent-soft); }
+tr:last-child td { border-bottom: 0; }
+
+.notes { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; }
+.note { border-top: 2px solid var(--accent); padding-top: 10px; display: flex; flex-direction: column; gap: 6px; font-size: 14px; }
+.note p { color: var(--muted); }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+</style>
+
+<div class="wrap">
+  <header>
+    <h1>Consistent Hashing Lab</h1>
+    <p class="lede">Blobasaur splits each node's data across several SQLite files and uses multi-probe consistent hashing to decide which file gets each key. Change the number of shards and watch how many keys have to move.</p>
+  </header>
+
+  <div class="tabs" role="tablist" aria-label="Hashing method">
+    <button role="tab" id="tab-modulo" data-mode="modulo" aria-selected="false">hash % N</button>
+    <button role="tab" id="tab-ring" data-mode="ring" aria-selected="false">Ring</button>
+    <button role="tab" id="tab-vnodes" data-mode="vnodes" aria-selected="false">Ring + virtual nodes</button>
+    <button role="tab" id="tab-multiprobe" data-mode="multiprobe" aria-selected="true">Multi-probe</button>
+  </div>
+
+  <div class="explain"><p id="explain"></p></div>
+
+  <div class="bench">
+    <section class="panel" aria-label="Hash ring">
+      <div class="ring-box"><canvas id="ring" aria-label="Hash ring diagram"></canvas></div>
+      <div class="legend" id="legend"></div>
+      <p class="ring-hint">Each dot is a key, colored by the shard it lands on. Click a dot to trace its route.</p>
+    </section>
+
+    <div class="stack">
+      <section class="panel" aria-label="Controls">
+        <h2>Setup</h2>
+        <div class="ctrl">
+          <label for="n" class="label">Shards</label>
+          <input type="range" id="n" min="1" max="16" value="4">
+          <span class="stepper">
+            <button class="btn sq" id="n-minus" aria-label="Remove a shard">−</button>
+            <output id="n-out" for="n">4</output>
+            <button class="btn sq" id="n-plus" aria-label="Add a shard">+</button>
+          </span>
+        </div>
+        <div class="ctrl" id="k-row">
+          <label for="k" class="label">Probes (k)</label>
+          <input type="range" id="k" min="1" max="41" value="21">
+          <output id="k-out" for="k">21</output>
+        </div>
+        <div class="ctrl" id="v-row" hidden>
+          <label for="v" class="label">Virtual nodes</label>
+          <input type="range" id="v" min="1" max="200" value="100">
+          <output id="v-out" for="v">100</output>
+        </div>
+        <div class="ctrl">
+          <label for="keys" class="label">Keys</label>
+          <input type="range" id="keys" min="200" max="5000" step="100" value="2000">
+          <output id="keys-out" for="keys">2,000</output>
+        </div>
+        <label class="check"><input type="checkbox" id="show-moved"> Highlight only the keys that moved</label>
+        <div id="change" class="change">Press <b>+</b> to add a shard. The ring will show which keys had to move to a different SQLite file.</div>
+      </section>
+
+      <section class="panel" aria-label="Load per shard">
+        <h2>Keys per shard</h2>
+        <div class="stat-line" id="load-stats"></div>
+        <div class="bars" id="bars"></div>
+      </section>
+    </div>
+  </div>
+
+  <section class="panel" aria-label="Key inspector">
+    <h2>Trace one key</h2>
+    <div class="inspect-row">
+      <label for="key-in" class="label" style="align-self:center">Key</label>
+      <input type="text" id="key-in" value="user123" spellcheck="false" autocomplete="off">
+      <button class="btn" id="key-random">Random key</button>
+    </div>
+    <div class="steps" id="steps"></div>
+  </section>
+
+  <section class="panel" aria-label="Method comparison">
+    <h2 id="cmp-title">All four methods, adding one shard</h2>
+    <p class="lede" style="margin:0">Same keys, same shard count. The smallest possible move is the new shard's fair share of keys.</p>
+    <div class="scroll"><table id="cmp"></table></div>
+  </section>
+
+  <section class="notes" aria-label="Why multi-probe">
+    <div class="note"><h3>Why not hash % N</h3><p>Changing N changes the answer for almost every key. Going from 4 to 5 shards moves about 80% of the data.</p></div>
+    <div class="note"><h3>Why not a plain ring</h3><p>Only about 1/(N+1) of keys move, but with one point per shard the arcs are uneven, so some shards get far more keys than others.</p></div>
+    <div class="note"><h3>Virtual nodes fix load, at a cost</h3><p>Giving each shard 100+ points evens the arcs, but the ring now holds N×100 entries to store and search.</p></div>
+    <div class="note"><h3>Multi-probe keeps the ring small</h3><p>One point per shard. Each key is hashed k times and goes to whichever shard is closest after any probe. With k = 1 it is the plain ring; more probes even out the load.</p></div>
+  </section>
+</div>
+
+<script>
+(() => {
+  const TWO32 = 4294967296;
+  const PALETTE = ['#e4572e','#2e86ab','#e9a23b','#7a5aa6','#35a86a','#d1495b','#159a8c','#ff8c1a',
+                   '#5c80bc','#c0607f','#7fb21f','#9c6644','#00a3b4','#b5651d','#8e44c9','#8f93b8'];
+
+  // 32-bit hashing: FNV-1a followed by the murmur3 finalizer for good bit spread.
+  function fmix(h) { h ^= h >>> 16; h = Math.imul(h, 0x85ebca6b); h ^= h >>> 13; h = Math.imul(h, 0xc2b2ae35); h ^= h >>> 16; return h >>> 0; }
+  function hashStr(s) { let h = 0x811c9dc5; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193); } return fmix(h); }
+  // Probe i of a key. Probe 0 is the key's own hash, so k = 1 equals the plain ring.
+  function probe(h, i) { return i === 0 ? h : fmix((h + Math.imul(i, 0x9e3779b9)) >>> 0); }
+
+  function buildRing(mode, N, V) {
+    const pts = [];
+    if (mode === 'modulo') return pts;
+    const reps = mode === 'vnodes' ? V : 1;
+    for (let s = 0; s < N; s++) for (let r = 0; r < reps; r++) {
+      pts.push({ pos: hashStr(mode === 'vnodes' ? `shard-${s}#${r}` : `shard-${s}`), shard: s, rep: r });
+    }
+    pts.sort((a, b) => a.pos - b.pos);
+    return pts;
+  }
+  function succ(pts, pos) { let lo = 0, hi = pts.length; while (lo < hi) { const m = (lo + hi) >> 1; if (pts[m].pos < pos) lo = m + 1; else hi = m; } return lo === pts.length ? 0 : lo; }
+  function dist(from, to) { return to >= from ? to - from : to + TWO32 - from; }
+
+  function owner(mode, h, N, pts, k) {
+    if (mode === 'modulo') return h % N;
+    if (mode !== 'multiprobe') return pts[succ(pts, h)].shard;
+    let best = -1, bestD = Infinity;
+    for (let i = 0; i < k; i++) {
+      const p = probe(h, i), j = succ(pts, p), d = dist(p, pts[j].pos);
+      if (d < bestD) { bestD = d; best = pts[j].shard; }
+    }
+    return best;
+  }
+  function assign(mode, N, opt) {
+    const pts = buildRing(mode, N, opt.V);
+    const owners = new Int16Array(keyHashes.length);
+    for (let i = 0; i < keyHashes.length; i++) owners[i] = owner(mode, keyHashes[i], N, pts, opt.k);
+    return { pts, owners, N };
+  }
+  function counts(owners, N) { const c = new Array(N).fill(0); for (const o of owners) c[o]++; return c; }
+  function peakRatio(owners, N) { const c = counts(owners, N); return Math.max(...c) / (owners.length / N); }
+  function movedCount(a, b) { let m = 0; for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) m++; return m; }
+
+  const fmtInt = n => n.toLocaleString('en-US');
+  const pct = (x, d = 1) => (x * 100).toFixed(d) + '%';
+  const ringPct = pos => (pos / TWO32 * 100).toFixed(2) + '%';
+  const shardName = s => `shard_${String(s).padStart(2, '0')}.db`;
+
+  // ---------- state ----------
+  const S = { mode: 'multiprobe', N: 4, k: 21, V: 100, nKeys: 2000, key: 'user123', showMoved: false };
+  let keyNames = [], keyHashes = [];
+  let cur = null, prev = null, dragBase = null;
+
+  function makeKeys() {
+    keyNames = Array.from({ length: S.nKeys }, (_, i) => `user${i + 1}`);
+    keyHashes = keyNames.map(hashStr);
+  }
+  const opt = () => ({ k: S.k, V: S.V });
+
+  // ---------- DOM ----------
+  const $ = id => document.getElementById(id);
+  const canvas = $('ring'), ctx = canvas.getContext('2d');
+  let keyXY = [];
+
+  const EXPLAIN = {
+    modulo: 'Take the key\'s hash and divide by the number of shards; the remainder is the shard. Fast and even, but the answer depends on N, so changing N reshuffles nearly every key. Ring position is shown only for comparison.',
+    ring: 'Each shard is hashed to one point on a circle of 2³² positions. A key is hashed to a position and walks clockwise to the first shard point it meets. Adding a shard only takes keys from the arc just before it.',
+    vnodes: 'Same ring, but every shard is hashed to many points (virtual nodes). The arcs get small and mixed, so each shard ends up with a similar total. The price is a much bigger ring to keep in memory and search.',
+    multiprobe: 'One point per shard, like the plain ring. Instead of hashing the key once, hash it k times. Each probe walks clockwise to its next shard; the key goes to the shard reached in the shortest walk. This is what Blobasaur uses to pick a SQLite file on a node.'
+  };
+
+  function tok(name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
+
+  function recompute() { cur = assign(S.mode, S.N, opt()); }
+
+  function setN(n, fromDrag) {
+    n = Math.max(1, Math.min(16, n));
+    if (n === S.N) return;
+    const base = fromDrag ? (dragBase ||= { owners: cur.owners, N: S.N }) : { owners: cur.owners, N: S.N };
+    S.N = n;
+    recompute();
+    prev = base.N === S.N ? null : base;
+    if (prev && !S.showMoved) { S.showMoved = true; $('show-moved').checked = true; }
+    if (!prev) { S.showMoved = false; $('show-moved').checked = false; }
+    render();
+  }
+  function resetChange() { prev = null; S.showMoved = false; $('show-moved').checked = false; }
+
+  // ---------- ring drawing ----------
+  function drawRing() {
+    const box = canvas.parentElement.getBoundingClientRect();
+    const size = Math.max(200, Math.floor(box.width));
+    const dpr = window.devicePixelRatio || 1;
+    if (canvas.width !== size * dpr) { canvas.width = size * dpr; canvas.height = size * dpr; }
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const c = size / 2, R = size / 2 - 34;
+    const fg = tok('--fg'), muted = tok('--muted'), line = tok('--line'), accent = tok('--accent'), surface = tok('--surface');
+    const ang = pos => pos / TWO32 * Math.PI * 2 - Math.PI / 2;
+    const at = (pos, r) => [c + Math.cos(ang(pos)) * r, c + Math.sin(ang(pos)) * r];
+
+    ctx.clearRect(0, 0, size, size);
+    ctx.lineCap = 'butt';
+    // base ring
+    ctx.strokeStyle = line; ctx.lineWidth = 10;
+    ctx.beginPath(); ctx.arc(c, c, R, 0, Math.PI * 2); ctx.stroke();
+
+    const pts = cur.pts;
+    // ownership arcs (ring and vnodes): the arc ending at a point belongs to that point's shard
+    if (S.mode === 'ring' || S.mode === 'vnodes') {
+      for (let j = 0; j < pts.length; j++) {
+        const startPos = j === 0 ? pts[pts.length - 1].pos - TWO32 : pts[j - 1].pos;
+        const a0 = ang(startPos), a1 = ang(pts[j].pos);
+        if (a1 - a0 < 1e-6) continue;
+        ctx.strokeStyle = PALETTE[pts[j].shard]; ctx.lineWidth = 10;
+        ctx.beginPath(); ctx.arc(c, c, R, a0, a1); ctx.stroke();
+      }
+    }
+
+    // keys
+    keyXY = new Array(keyHashes.length);
+    const showMoved = S.showMoved && prev;
+    for (let i = 0; i < keyHashes.length; i++) {
+      const r = R - 20 - (i % 7) * 7;
+      const [x, y] = at(keyHashes[i], r);
+      keyXY[i] = [x, y];
+      const moved = showMoved && prev.owners[i] !== cur.owners[i];
+      ctx.globalAlpha = showMoved ? (moved ? 1 : 0.1) : 0.85;
+      ctx.fillStyle = PALETTE[cur.owners[i]];
+      ctx.beginPath(); ctx.arc(x, y, moved ? 3.4 : 2.3, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+
+    // shard points
+    if (S.mode === 'ring' || S.mode === 'multiprobe') {
+      ctx.font = `500 11px ${tok('--font-mono')}`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      for (const p of pts) {
+        const [x, y] = at(p.pos, R);
+        ctx.fillStyle = PALETTE[p.shard]; ctx.strokeStyle = surface; ctx.lineWidth = 2.5;
+        ctx.beginPath(); ctx.arc(x, y, 8, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+        const [lx, ly] = at(p.pos, R + 22);
+        ctx.fillStyle = fg; ctx.fillText('s' + p.shard, lx, ly);
+      }
+    }
+
+    // selected key route
+    const h = hashStr(S.key);
+    const [kx, ky] = at(h, R + 15);
+    if (S.mode === 'ring' || S.mode === 'vnodes') {
+      const j = succ(pts, h);
+      routeArc(h, pts[j].pos, R + 15, accent, 3);
+    } else if (S.mode === 'multiprobe') {
+      const tr = traceMulti(h);
+      tr.probes.forEach(pr => {
+        if (pr.i === tr.winner.i) return;
+        routeArc(pr.pos, pr.target, R + 15, muted, 1, 0.45);
+        const [px, py] = at(pr.pos, R + 15);
+        ctx.strokeStyle = muted; ctx.lineWidth = 1.5; ctx.globalAlpha = 0.8;
+        ctx.beginPath(); ctx.arc(px, py, 3.5, 0, Math.PI * 2); ctx.stroke(); ctx.globalAlpha = 1;
+      });
+      routeArc(tr.winner.pos, tr.winner.target, R + 15, accent, 3.5);
+      const [wx, wy] = at(tr.winner.pos, R + 15);
+      ctx.fillStyle = accent; ctx.beginPath(); ctx.arc(wx, wy, 4.5, 0, Math.PI * 2); ctx.fill();
+    }
+    // key marker
+    ctx.fillStyle = fg; ctx.strokeStyle = surface; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(kx, ky, 5.5, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+
+    // center label
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillStyle = fg; ctx.font = `600 ${Math.round(size / 17)}px ${tok('--font-display')}`;
+    ctx.fillText(`${S.N} shard${S.N > 1 ? 's' : ''}`, c, c - size / 30);
+    ctx.fillStyle = muted; ctx.font = `400 ${Math.round(size / 38)}px ${tok('--font-body')}`;
+    const sub = S.mode === 'modulo' ? 'ring position ignored: shard = hash % N'
+      : S.mode === 'vnodes' ? `${fmtInt(pts.length)} points on the ring`
+      : S.mode === 'multiprobe' ? `${pts.length} points · ${S.k} probe${S.k > 1 ? 's' : ''} per key`
+      : `${pts.length} points on the ring`;
+    ctx.fillText(sub, c, c + size / 30);
+    if (showMoved) {
+      ctx.fillStyle = tok('--bad'); ctx.font = `600 ${Math.round(size / 38)}px ${tok('--font-body')}`;
+      ctx.fillText(`${fmtInt(movedCount(prev.owners, cur.owners))} keys moved`, c, c + size / 13);
+    }
+
+    function routeArc(fromPos, toPos, r, color, w, alpha = 1) {
+      const a0 = ang(fromPos); let a1 = ang(toPos); if (a1 < a0) a1 += Math.PI * 2;
+      if (a1 - a0 < 1e-4) return;
+      ctx.globalAlpha = alpha; ctx.strokeStyle = color; ctx.lineWidth = w; ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.arc(c, c, r, a0, a1); ctx.stroke();
+      ctx.globalAlpha = 1; ctx.lineCap = 'butt';
+    }
+  }
+
+  function traceMulti(h) {
+    const pts = cur.pts, probes = [];
+    let winner = null;
+    for (let i = 0; i < S.k; i++) {
+      const p = probe(h, i), j = succ(pts, p), d = dist(p, pts[j].pos);
+      const pr = { i, pos: p, target: pts[j].pos, shard: pts[j].shard, d };
+      probes.push(pr);
+      if (!winner || d < winner.d) winner = pr;
+    }
+    return { probes, winner };
+  }
+
+  // ---------- panels ----------
+  function renderLegend() {
+    $('legend').innerHTML = Array.from({ length: S.N }, (_, s) =>
+      `<span><i class="swatch" style="background:${PALETTE[s]}"></i>${shardName(s)}</span>`).join('');
+  }
+
+  function renderBars() {
+    const c = counts(cur.owners, S.N), avg = cur.owners.length / S.N, max = Math.max(...c);
+    const scale = Math.max(max, avg) * 1.08;
+    $('bars').innerHTML = c.map((n, s) => `
+      <div class="bar-row">
+        <span class="name">${shardName(s)}</span>
+        <span class="track"><span class="fill" style="width:${n / scale * 100}%;background:${PALETTE[s]}"></span>
+          <span class="avg" style="left:${avg / scale * 100}%"></span></span>
+        <span class="n">${fmtInt(n)}</span>
+      </div>`).join('');
+    const ratio = max / avg;
+    const tone = ratio < 1.15 ? 'good' : 'bad';
+    $('load-stats').innerHTML = `<span>Average <b>${fmtInt(Math.round(avg))}</b></span>
+      <span>Busiest shard <b>${ratio.toFixed(2)}×</b> the average <span class="pill ${tone}">${ratio < 1.15 ? 'even' : 'uneven'}</span></span>`;
+  }
+
+  function renderChange() {
+    const el = $('change');
+    if (!prev) {
+      el.className = 'change';
+      el.innerHTML = 'Press <b>+</b> to add a shard. The ring will show which keys had to move to a different SQLite file.';
+      return;
+    }
+    const m = movedCount(prev.owners, cur.owners), total = cur.owners.length;
+    const ideal = Math.abs(S.N - prev.N) / Math.max(S.N, prev.N);
+    const good = m / total <= ideal * 1.5 + 0.01;
+    el.className = 'change ' + (good ? 'good' : 'bad');
+    el.innerHTML = `${prev.N} → ${S.N} shards: <strong>${fmtInt(m)}</strong> of ${fmtInt(total)} keys moved (<strong>${pct(m / total)}</strong>).
+      Smallest possible: <strong>${pct(ideal)}</strong>.<span class="pill ${good ? 'good' : 'bad'}">${good ? 'minimal' : 'reshuffle'}</span>
+      <div style="margin-top:8px"><button class="btn" id="reset-change">Clear comparison</button></div>`;
+    $('reset-change').onclick = () => { resetChange(); render(); };
+  }
+
+  function renderSteps() {
+    const h = hashStr(S.key), el = $('steps');
+    const head = `<p>hash(<code>${esc(S.key)}</code>) = <code>${fmtInt(h)}</code>, which is <code>${ringPct(h)}</code> of the way around the ring.</p>`;
+    if (S.mode === 'modulo') {
+      const s = h % S.N;
+      el.innerHTML = head + `<p><code>${fmtInt(h)} % ${S.N} = ${s}</code></p>
+        <p class="result">→ <code>${shardName(s)}</code></p>
+        <p style="color:var(--muted)">Try ${S.N + 1} shards: <code>${fmtInt(h)} % ${S.N + 1} = ${h % (S.N + 1)}</code>. ${h % (S.N + 1) === s ? 'This key happens to stay put.' : 'A different shard, so this key would have to move.'}</p>`;
+      return;
+    }
+    const pts = cur.pts;
+    if (S.mode === 'ring' || S.mode === 'vnodes') {
+      const j = succ(pts, h), p = pts[j], d = dist(h, p.pos);
+      const what = S.mode === 'vnodes' ? `virtual node #${p.rep} of <code>${shardName(p.shard)}</code>` : `the point for <code>${shardName(p.shard)}</code>`;
+      el.innerHTML = head + `<p>Walk clockwise to the next point on the ring: ${what} at <code>${ringPct(p.pos)}</code>, ${pct(d / TWO32, 3)} of the ring away.</p>
+        <p class="result">→ <code>${shardName(p.shard)}</code></p>`;
+      return;
+    }
+    const tr = traceMulti(h);
+    el.innerHTML = head + `<p>Hash the key ${S.k} time${S.k > 1 ? 's' : ''}. From each probe, walk clockwise to the next shard. Keep the shortest walk.</p>
+      <div class="probes scroll"><table>
+        <thead><tr><th>Probe</th><th class="num">Position</th><th>Next shard</th><th class="num">Walk</th></tr></thead>
+        <tbody>${tr.probes.map(p => `<tr class="${p.i === tr.winner.i ? 'win' : ''}">
+          <td class="num" style="text-align:left">#${p.i}</td><td class="num">${ringPct(p.pos)}</td>
+          <td><span class="swatch" style="background:${PALETTE[p.shard]};margin-right:6px"></span><span class="mono">${shardName(p.shard)}</span></td>
+          <td class="num">${pct(p.d / TWO32, 3)}</td></tr>`).join('')}</tbody>
+      </table></div>
+      <p class="result">Shortest walk is probe #${tr.winner.i} (${pct(tr.winner.d / TWO32, 3)}) → <code>${shardName(tr.winner.shard)}</code></p>`;
+  }
+
+  function renderCompare() {
+    const N = S.N, o = opt();
+    const rows = [
+      ['modulo', 'hash % N', '—', '1 division'],
+      ['ring', 'Ring, 1 point per shard', fmtInt(N), '1 hash + 1 search'],
+      ['vnodes', `Ring + ${S.V} virtual nodes`, fmtInt(N * S.V), '1 hash + 1 search over a big ring'],
+      ['multiprobe', `Multi-probe, k = ${S.k}`, fmtInt(N), `${S.k} hashes + ${S.k} searches`]
+    ];
+    const ideal = 1 / (N + 1);
+    $('cmp-title').textContent = `All four methods, going from ${N} to ${N + 1} shards`;
+    $('cmp').innerHTML = `<thead><tr><th>Method</th><th class="num">Busiest shard vs avg</th><th class="num">Keys moved</th><th class="num">Points on ring</th><th>Lookup work</th></tr></thead><tbody>` +
+      rows.map(([mode, label, points, work]) => {
+        const a = assign(mode, N, o), b = assign(mode, N + 1, o);
+        const ratio = peakRatio(a.owners, N), mv = movedCount(a.owners, b.owners) / a.owners.length;
+        const mvGood = mv <= ideal * 1.5 + 0.01, ldGood = ratio < 1.15;
+        return `<tr class="${mode === S.mode ? 'current' : ''}"><td>${label}</td>
+          <td class="num">${ratio.toFixed(2)}× <span class="pill ${ldGood ? 'good' : 'bad'}">${ldGood ? 'even' : 'uneven'}</span></td>
+          <td class="num">${pct(mv)} <span class="pill ${mvGood ? 'good' : 'bad'}">${mvGood ? 'minimal' : 'reshuffle'}</span></td>
+          <td class="num">${points}</td><td>${work}</td></tr>`;
+      }).join('') + `<tr><td colspan="5" style="color:var(--muted);white-space:normal">Smallest possible move: ${pct(ideal)} of keys (the new shard's fair share).</td></tr></tbody>`;
+  }
+
+  function esc(s) { return s.replace(/[&<>"]/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[ch]); }
+
+  let cmpTimer = null;
+  function render() {
+    $('n').value = S.N; $('n-out').textContent = S.N;
+    $('k-out').textContent = S.k; $('v-out').textContent = S.V; $('keys-out').textContent = fmtInt(S.nKeys);
+    $('k-row').hidden = S.mode !== 'multiprobe';
+    $('v-row').hidden = S.mode !== 'vnodes';
+    document.querySelectorAll('.tabs button').forEach(b => b.setAttribute('aria-selected', String(b.dataset.mode === S.mode)));
+    $('explain').textContent = EXPLAIN[S.mode];
+    renderLegend(); renderBars(); renderChange(); renderSteps(); drawRing();
+    clearTimeout(cmpTimer); cmpTimer = setTimeout(renderCompare, 60);
+  }
+
+  // ---------- events ----------
+  document.querySelectorAll('.tabs button').forEach(b => b.addEventListener('click', () => {
+    S.mode = b.dataset.mode; resetChange(); recompute(); render();
+  }));
+  $('n').addEventListener('input', e => setN(+e.target.value, true));
+  $('n').addEventListener('change', () => { dragBase = null; });
+  $('n-plus').addEventListener('click', () => setN(S.N + 1));
+  $('n-minus').addEventListener('click', () => setN(S.N - 1));
+  $('k').addEventListener('input', e => { S.k = +e.target.value; resetChange(); recompute(); render(); });
+  $('v').addEventListener('input', e => { S.V = +e.target.value; resetChange(); recompute(); render(); });
+  $('keys').addEventListener('input', e => { S.nKeys = +e.target.value; makeKeys(); resetChange(); recompute(); render(); });
+  $('show-moved').addEventListener('change', e => { S.showMoved = e.target.checked; drawRing(); });
+  $('key-in').addEventListener('input', e => { S.key = e.target.value || ''; renderSteps(); drawRing(); });
+  $('key-random').addEventListener('click', () => {
+    S.key = keyNames[Math.floor(Math.random() * keyNames.length)]; $('key-in').value = S.key; renderSteps(); drawRing();
+  });
+  canvas.addEventListener('click', e => {
+    const r = canvas.getBoundingClientRect(), x = e.clientX - r.left, y = e.clientY - r.top;
+    let best = -1, bd = 14 * 14;
+    for (let i = 0; i < keyXY.length; i++) {
+      const dx = keyXY[i][0] - x, dy = keyXY[i][1] - y, d = dx * dx + dy * dy;
+      if (d < bd) { bd = d; best = i; }
+    }
+    if (best >= 0) { S.key = keyNames[best]; $('key-in').value = S.key; renderSteps(); drawRing(); }
+  });
+  new ResizeObserver(() => drawRing()).observe(canvas.parentElement);
+  matchMedia('(prefers-color-scheme: dark)').addEventListener('change', drawRing);
+  new MutationObserver(drawRing).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(drawRing);
+
+  makeKeys(); recompute(); render();
+})();
+</script>
